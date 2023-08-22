@@ -1,4 +1,6 @@
 #include <lvgl.h>
+#include <TimeLib.h>
+#include <WiFiUdp.h>
 #include <TFT_eSPI.h>
 #include <string>
 #include <ESP8266WiFi.h>
@@ -58,6 +60,27 @@ double temp_value;
 lv_coord_t upload_serise[10] = {0};
 lv_coord_t download_serise[10] = {0};
 
+// NTP服务
+WiFiUDP Udp;
+unsigned int localPort = 8000;
+static const char ntpServerName[] = "ntp6.aliyun.com";
+const int timeZone = 8; //东八区
+void sendNTPpacket(IPAddress &address); //向NTP服务器发送请求
+time_t getNtpTime();                    //从NTP获取时间
+
+//定时亮度
+int defaultLight = 180;
+bool autoLight = false; //true:开启定时亮度 false:关闭定时亮度
+int nightLight = 256; //[0, 256] 越小越亮,越大越暗
+int nightHour = 23;
+int nightMin = 00;
+int nightSec = 00;
+int dayLight = defaultLight;  //[0, 256] 越小越亮,越大越暗
+int dayHour = 07;
+int dayMin = 00;
+int daySec = 00;
+
+
 #if LV_USE_LOG != 0
 /* Serial debugging */
 void my_print(lv_log_level_t level, const char *file, uint32_t line, const char *dsc, const char *params)
@@ -68,7 +91,7 @@ void my_print(lv_log_level_t level, const char *file, uint32_t line, const char 
 }
 #endif
 
-// 屏幕亮度设置，value [0, 256] 越小月亮,越大越暗
+// 屏幕亮度设置，value [0, 256] 越小越亮,越大越暗
 void setBrightness(int value) {
     pinMode(TFT_BL, INPUT);
     analogWrite(TFT_BL, value);
@@ -78,7 +101,7 @@ void setBrightness(int value) {
 // 页面初始化
 void setupPages()
 {
-    setBrightness(180);
+    setBrightness(defaultLight);
     login_page = lv_cont_create(lv_scr_act(), NULL);
     lv_obj_set_size(login_page, 240, 240); // 设置容器大小
     lv_obj_set_style_local_bg_color(login_page, LV_OBJ_PART_MAIN, LV_STATE_DEFAULT, LV_COLOR_BLACK);
@@ -125,6 +148,8 @@ void connectWiFi()
     // wifi验证成功，切换到monitor页面
     lv_obj_set_hidden(login_page, true);
     lv_obj_set_hidden(monitor_page, false);
+    // 获取一次时间
+    getNtpTime();
 
     Serial.println("");                                // WiFi连接成功后
     Serial.println("Connection established!");         // NodeMCU将通过串口监视器输出"连接成功"信息。
@@ -354,6 +379,14 @@ void setup()
     Serial.begin(921600); /* prepare for possible serial debug */
     srand((unsigned)time(NULL));
 
+    Serial.print("local IP： ");
+    Serial.println(WiFi.localIP());
+    Serial.println("start UDP");
+    Udp.begin(localPort);
+    Serial.println("wait sync...");
+    setSyncProvider(getNtpTime);
+    setSyncInterval(300);
+
     lv_init();
 
 #if LV_USE_LOG != 0
@@ -580,7 +613,90 @@ void setup()
     lv_task_t *t = lv_task_create(task_cb, 1000, LV_TASK_PRIO_MID, &test_data);
 }
 
+/*-------- NTP code ----------*/
+
+const int NTP_PACKET_SIZE = 48;     // NTP时间在消息的前48字节中
+uint8_t packetBuffer[NTP_PACKET_SIZE]; // buffer to hold incoming & outgoing packets
+
+time_t getNtpTime()
+{
+    IPAddress ntpServerIP; // NTP server's ip address
+
+    while (Udp.parsePacket() > 0)
+        ; // discard any previously received packets
+    // Serial.println("Transmit NTP Request");
+    //  get a random server from the pool
+    WiFi.hostByName(ntpServerName, ntpServerIP);
+    // Serial.print(ntpServerName);
+    // Serial.print(": ");
+    // Serial.println(ntpServerIP);
+    sendNTPpacket(ntpServerIP);
+    uint32_t beginWait = millis();
+    while (millis() - beginWait < 1500)
+    {
+        int size = Udp.parsePacket();
+        if (size >= NTP_PACKET_SIZE)
+        {
+        Serial.println("Receive NTP Response");
+        Udp.read(packetBuffer, NTP_PACKET_SIZE); // read packet into the buffer
+        unsigned long secsSince1900;
+        // convert four bytes starting at location 40 to a long integer
+        secsSince1900 = (unsigned long)packetBuffer[40] << 24;
+        secsSince1900 |= (unsigned long)packetBuffer[41] << 16;
+        secsSince1900 |= (unsigned long)packetBuffer[42] << 8;
+        secsSince1900 |= (unsigned long)packetBuffer[43];
+        // Serial.println(secsSince1900 - 2208988800UL + timeZone * SECS_PER_HOUR);
+        return secsSince1900 - 2208988800UL + timeZone * SECS_PER_HOUR;
+        }
+    }
+    Serial.println("No NTP Response :-(");
+    return 0; // 无法获取时间时返回0
+}
+
+// 向NTP服务器发送请求
+void sendNTPpacket(IPAddress &address)
+{
+    // set all bytes in the buffer to 0
+    memset(packetBuffer, 0, NTP_PACKET_SIZE);
+    // Initialize values needed to form NTP request
+    // (see URL above for details on the packets)
+    packetBuffer[0] = 0b11100011; // LI, Version, Mode
+    packetBuffer[1] = 0;          // Stratum, or type of clock
+    packetBuffer[2] = 6;          // Polling Interval
+    packetBuffer[3] = 0xEC;       // Peer Clock Precision
+    // 8 bytes of zero for Root Delay & Root Dispersion
+    packetBuffer[12] = 49;
+    packetBuffer[13] = 0x4E;
+    packetBuffer[14] = 49;
+    packetBuffer[15] = 52;
+    // all NTP fields have been given values, now
+    // you can send a packet requesting a timestamp:
+    Udp.beginPacket(address, 123); // NTP requests are to port 123
+    Udp.write(packetBuffer, NTP_PACKET_SIZE);
+    Udp.endPacket();
+}
+
+void autoLightCtl()
+{
+    if (!autoLight)
+    {
+        return;
+    }
+    if ((hour() == nightHour) && (minute() == nightMin) && (second() == nightSec))
+    {
+        setBrightness(nightLight);
+        Serial.println("nightLight: ");
+        Serial.println(nightLight);
+    } else if ((hour() == dayHour) && (minute() == dayMin) && (second() == daySec))
+    {
+        setBrightness(dayLight);
+        Serial.println("dayLight: ");
+        Serial.println(dayLight);
+    }
+}
+
 void loop()
 {
     lv_task_handler(); /* let the GUI do its work */
+    autoLightCtl();
 }
