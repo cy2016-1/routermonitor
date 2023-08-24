@@ -85,10 +85,8 @@ void parseNetDataResponse(WiFiClient &client, NetChartData &data)
  *  sensors.temp_thermal_zone0_thermal_thermal_zone - CPU 温度信息
  */
 
-bool getNetDataInfoWithDimension(String chartID, NetChartData &data, String dimensions_filter)
+bool getNetDataInfoWithDimension(String chartID, NetChartData &data, String dimensions_filter, char* netdataHost, int netdataPort)
 {
-    const char *NETDATA_HOST = "192.168.100.1";
-    int NETDATA_PORT = 19999;
     // String reqRes = "/api/v0/data?chart=sensors.temp_thermal_zone0_thermal_thermal_zone0&format=json&points=9&group=average&gtime=0&options=s%7Cjsonwrap%7Cnonzero&after=-10";
     String reqRes = "/api/v1/data?chart=" + chartID + "&format=array&points=9&group=average&gtime=0&options=s%7Cjsonwrap%7Cnonzero&after=-2";
     reqRes = reqRes + "&dimensions=" + dimensions_filter;
@@ -97,10 +95,10 @@ bool getNetDataInfoWithDimension(String chartID, NetChartData &data, String dime
     bool ret = false;
 
     // 建立http请求信息
-    String httpRequest = String("GET ") + reqRes + " HTTP/0.1\r\n" + "Host: " + NETDATA_HOST + "\r\n" + "Connection: close\r\n\r\n";
+    String httpRequest = String("GET ") + reqRes + " HTTP/0.1\r\n" + "Host: " + netdataHost + "\r\n" + "Connection: close\r\n\r\n";
 
     // 尝试连接服务器
-    if (client.connect(NETDATA_HOST, NETDATA_PORT))
+    if (client.connect(netdataHost, netdataPort))
     {
         // 向服务器发送http请求信息
         client.print(httpRequest);
@@ -130,9 +128,9 @@ bool getNetDataInfoWithDimension(String chartID, NetChartData &data, String dime
     return ret;
 }
 
-bool getNetDataInfo(String chartID, NetChartData &data)
+bool getNetDataInfo(String chartID, NetChartData &data, char* netdataHost, int netdataPort)
 {
-    return getNetDataInfoWithDimension(chartID, data, "");
+    return getNetDataInfoWithDimension(chartID, data, "", netdataHost, netdataPort);
 }
 
 #endif

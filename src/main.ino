@@ -1,6 +1,7 @@
 #include <lvgl.h>
 #include <TimeLib.h>
 #include <WiFiUdp.h>
+#include <WiFiManager.h>
 #include <TFT_eSPI.h>
 #include <string>
 #include <ESP8266WiFi.h>
@@ -9,9 +10,38 @@
 
 using namespace std;
 
-const char *ssid = "HWCTQ";         // 连接WiFi名（此处使用taichi-maker为示例）
+// 以下为配置项
+// wifi配置,如不进行配置,默认进入配网模式
+char *ssid = "";         // 连接WiFi名（此处使用taichi-maker为示例）
                                     // 请将您需要连接的WiFi名填入引号中
-const char *password = "qazxsw123"; // 连接WiFi密码（此处使用12345678为示例）
+char *password = ""; // 连接WiFi密码（此处使用12345678为示例）
+
+//wifi连接超时时间
+unsigned int connectTimeout = 10;  //默认10s，超出这个时间自动进入配网模式
+
+//路由器netdata配置
+char *netdataHost = "192.168.1.1";
+unsigned int netdataPort = 19999;
+
+//亮度配置
+unsigned int bright = 220;
+
+//定时亮度配置
+bool autoLight = true; //true:开启定时亮度 false:关闭定时亮度
+unsigned int nightLight = 256; //[0, 256] 越小越亮,越大越暗
+unsigned int nightHour = 23;
+unsigned int nightMin = 00;
+unsigned int nightSec = 0;
+unsigned int dayLight = bright;  //[0, 256] 越小越亮,越大越暗
+unsigned int dayHour = 07;
+unsigned int dayMin = 00;
+unsigned int daySec = 0;
+
+//统计参数配置
+char* cpuPara = "system.cpu";  //cpu参数
+char* memPara = "mem.available";  //内存参数
+char* netPara = "net.eth0";  //网络端口参数
+char* tempPara = "sensors.acpitz-acpi-0_temperature";  //温度参数
 
 // extern lv_font_t my_font_name;
 LV_FONT_DECLARE(tencent_w7_22)
@@ -60,6 +90,12 @@ double temp_value;
 lv_coord_t upload_serise[10] = {0};
 lv_coord_t download_serise[10] = {0};
 
+// LCD屏幕相关设置
+TFT_eSprite clk = TFT_eSprite(&tft);
+//wifi配置
+WiFiManager wm; // global wm instance
+void Webwin();
+void Webconfig();
 // NTP服务
 WiFiUDP Udp;
 unsigned int localPort = 8000;
@@ -67,18 +103,6 @@ static const char ntpServerName[] = "ntp6.aliyun.com";
 const int timeZone = 8; //东八区
 void sendNTPpacket(IPAddress &address); //向NTP服务器发送请求
 time_t getNtpTime();                    //从NTP获取时间
-
-//定时亮度
-int defaultLight = 180;
-bool autoLight = false; //true:开启定时亮度 false:关闭定时亮度
-int nightLight = 256; //[0, 256] 越小越亮,越大越暗
-int nightHour = 23;
-int nightMin = 00;
-int nightSec = 00;
-int dayLight = defaultLight;  //[0, 256] 越小越亮,越大越暗
-int dayHour = 07;
-int dayMin = 00;
-int daySec = 00;
 
 
 #if LV_USE_LOG != 0
@@ -101,7 +125,7 @@ void setBrightness(int value) {
 // 页面初始化
 void setupPages()
 {
-    setBrightness(defaultLight);
+    setBrightness(bright);
     login_page = lv_cont_create(lv_scr_act(), NULL);
     lv_obj_set_size(login_page, 240, 240); // 设置容器大小
     lv_obj_set_style_local_bg_color(login_page, LV_OBJ_PART_MAIN, LV_STATE_DEFAULT, LV_COLOR_BLACK);
@@ -143,12 +167,36 @@ void connectWiFi()
         delay(1000); // 如果WiFi连接成功则返回值为WL_CONNECTED
         Serial.print(i++);
         Serial.print(' '); // 此处通过While循环让NodeMCU每隔一秒钟检查一次WiFi.status()函数返回值
-    }                      // 同时NodeMCU将通过串口监视器输出连接时长读秒。
+                           // 同时NodeMCU将通过串口监视器输出连接时长读秒。
                            // 这个读秒是通过变量i每隔一秒自加1来实现的。
+        if (i >= connectTimeout)
+        {
+            lv_obj_set_hidden(login_page, true);
+            Webwin();
+            Webconfig();
+        }
+    }
+    if (WiFi.status() == WL_CONNECTED)
+    {
+        Serial.print("SSID:");
+        Serial.println(WiFi.SSID().c_str());
+        Serial.print("PSW:");
+        Serial.println(WiFi.psk().c_str());
+        strcpy(ssid, WiFi.SSID().c_str()); //名称复制
+        strcpy(password, WiFi.psk().c_str());   //密码复制
+    }
     // wifi验证成功，切换到monitor页面
     lv_obj_set_hidden(login_page, true);
     lv_obj_set_hidden(monitor_page, false);
-    // 获取一次时间
+
+    Serial.print("local IP： ");
+    Serial.println(WiFi.localIP());
+    Serial.println("start UDP");
+    Udp.begin(localPort);
+    Serial.println("wait sync...");
+    setSyncProvider(getNtpTime);
+    setSyncInterval(300);
+
     getNtpTime();
 
     Serial.println("");                                // WiFi连接成功后
@@ -188,7 +236,7 @@ bool read_encoder(lv_indev_drv_t *indev, lv_indev_data_t *data)
 
 void getCPUUsage()
 {
-    if (getNetDataInfo("system.cpu", netChartData))
+    if (getNetDataInfo(cpuPara, netChartData, netdataHost, netdataPort))
     {
         Serial.print("CPU Usage: ");
         Serial.println(String(netChartData.max).c_str());
@@ -199,7 +247,7 @@ void getCPUUsage()
 
 void getMemoryUsage()
 {
-    if (getNetDataInfo("mem.available", netChartData))
+    if (getNetDataInfo(memPara, netChartData, netdataHost, netdataPort))
     {
         Serial.print("Memory Available: ");
         Serial.println(String(netChartData.max).c_str());
@@ -239,7 +287,7 @@ lv_coord_t updateNetSeries(lv_coord_t *series, double speed)
 
 void getNetworkReceived()
 {
-    if (getNetDataInfoWithDimension("net.eth0", netChartData, "received"))
+    if (getNetDataInfoWithDimension(netPara, netChartData, "received", netdataHost, netdataPort))
     {
         Serial.print("Received: ");
         Serial.println(String(netChartData.max).c_str());
@@ -252,7 +300,7 @@ void getNetworkReceived()
 
 void getNetworkSent()
 {
-    if (getNetDataInfoWithDimension("net.eth0", netChartData, "sent"))
+    if (getNetDataInfoWithDimension(netPara, netChartData, "sent", netdataHost, netdataPort))
     {
         Serial.print("Sent: ");
         Serial.println(String(netChartData.max).c_str());
@@ -265,7 +313,7 @@ void getNetworkSent()
 
 void getTemperature()
 {
-    if (getNetDataInfo("sensors.temp_thermal_zone0_thermal_thermal_zone0", netChartData))
+    if (getNetDataInfo(tempPara, netChartData, netdataHost, netdataPort))
     {
         Serial.print("Temperature: ");
         Serial.println(String(netChartData.max).c_str());
@@ -378,14 +426,6 @@ void setup()
 {
     Serial.begin(921600); /* prepare for possible serial debug */
     srand((unsigned)time(NULL));
-
-    Serial.print("local IP： ");
-    Serial.println(WiFi.localIP());
-    Serial.println("start UDP");
-    Udp.begin(localPort);
-    Serial.println("wait sync...");
-    setSyncProvider(getNtpTime);
-    setSyncInterval(300);
 
     lv_init();
 
@@ -611,6 +651,83 @@ void setup()
     lv_obj_set_pos(temp_value_label, 160, 170);
 
     lv_task_t *t = lv_task_create(task_cb, 1000, LV_TASK_PRIO_MID, &test_data);
+}
+
+String getParam(String name)
+{
+    // read parameter from server, for customhmtl input
+    String value;
+    if (wm.server->hasArg(name))
+    {
+        value = wm.server->arg(name);
+    }
+    return value;
+}
+
+void saveParamCallback()
+{
+    Serial.println("[CALLBACK] saveParamCallback");
+
+    bright = getParam("bright").toInt();
+    strcpy(netdataHost, getParam("host").c_str());
+    netdataPort = getParam("port").toInt();
+
+    setBrightness(bright);
+
+    Serial.print("bright:");
+    Serial.println(bright);
+    Serial.print("netdataHost:");
+    Serial.println(netdataHost);
+    Serial.print("netdataPort:");
+    Serial.println(netdataPort);
+}
+
+void Webwin()
+{
+    clk.setColorDepth(8);
+
+    clk.createSprite(200, 60); //创建窗口
+    clk.fillSprite(0x0000);    //填充率
+
+    clk.setTextDatum(CC_DATUM); //设置文本数据
+    clk.setTextColor(TFT_GREEN, 0x0000);
+    clk.drawString("WiFi Connect Fail!", 100, 10, 2);
+    clk.drawString("SSID:", 45, 40, 2);
+    clk.setTextColor(TFT_WHITE, 0x0000);
+    clk.drawString("routerMonitor", 125, 40, 2);
+    clk.pushSprite(20, 50); //窗口位置
+
+    clk.deleteSprite();
+}
+
+// WEB配网函数
+void Webconfig()
+{
+  WiFi.mode(WIFI_STA); // explicitly set mode, esp defaults to STA+AP
+
+    string brightStr = to_string(bright);
+    const char* brightChar = brightStr.c_str();
+    string netdataPortStr = to_string(netdataPort);
+    const char* netdataPortChar = netdataPortStr.c_str();
+
+    WiFiManagerParameter custom_bright("bright", "屏幕亮度（0-256）", brightChar, 3);
+    WiFiManagerParameter custom_host("host", "netdata服务器IP", netdataHost, 15);
+    WiFiManagerParameter custom_port("port", "netdata服务器端口", netdataPortChar, 5);
+    WiFiManagerParameter p_lineBreak_notext("<p></p>");
+
+    // wm.addParameter(&p_lineBreak_notext);
+    // wm.addParameter(&custom_field);
+    wm.addParameter(&p_lineBreak_notext);
+    wm.addParameter(&custom_bright);
+    wm.addParameter(&p_lineBreak_notext);
+    wm.addParameter(&custom_host);
+    wm.addParameter(&p_lineBreak_notext);
+    wm.addParameter(&custom_port);
+    wm.addParameter(&p_lineBreak_notext);
+    wm.setSaveParamsCallback(saveParamCallback);
+
+  bool res;
+    res = wm.autoConnect("routerMonitor"); // anonymous ap
 }
 
 /*-------- NTP code ----------*/
