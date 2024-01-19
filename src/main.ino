@@ -7,13 +7,15 @@
 
 using namespace std;
 
-const char *ssid = "HWCTQ";         // 连接WiFi名（此处使用taichi-maker为示例）
-                                    // 请将您需要连接的WiFi名填入引号中
-const char *password = "qazxsw123"; // 连接WiFi密码（此处使用12345678为示例）
+const char *ssid = "ImmortalWrt";    // 连接WiFi名（此处使用taichi-maker为示例）
+                                     // 请将您需要连接的WiFi名填入引号中
+const char *password = "8877654321"; // 连接WiFi密码（此处使用12345678为示例）
 
 // extern lv_font_t my_font_name;
 LV_FONT_DECLARE(tencent_w7_22)
 LV_FONT_DECLARE(tencent_w7_24)
+// LV_FONT_DECLARE(tencent_w7_24_time)
+LV_FONT_DECLARE(tencent_w7_20_time)
 
 TFT_eSPI tft = TFT_eSPI(); /* TFT instance */
 static lv_disp_buf_t disp_buf;
@@ -39,6 +41,7 @@ static lv_obj_t *mem_value_label;
 static lv_obj_t *temp_value_label;
 static lv_obj_t *temperature_arc;
 static lv_obj_t *ip_label;
+static lv_obj_t *up_time_label;
 static lv_style_t arc_indic_style;
 static lv_obj_t *chart;
 
@@ -57,6 +60,10 @@ double mem_usage;
 double temp_value;
 lv_coord_t upload_serise[10] = {0};
 lv_coord_t download_serise[10] = {0};
+string up_time;
+
+const auto net_name = "net.ovs_eth1";
+const auto mem_size = 7833960 / 1024.0;
 
 #if LV_USE_LOG != 0
 /* Serial debugging */
@@ -69,7 +76,8 @@ void my_print(lv_log_level_t level, const char *file, uint32_t line, const char 
 #endif
 
 // 屏幕亮度设置，value [0, 256] 越小月亮,越大越暗
-void setBrightness(int value) {
+void setBrightness(int value)
+{
     pinMode(TFT_BL, INPUT);
     analogWrite(TFT_BL, value);
     pinMode(TFT_BL, OUTPUT);
@@ -167,8 +175,10 @@ void getCPUUsage()
     {
         Serial.print("CPU Usage: ");
         Serial.println(String(netChartData.max).c_str());
-
-        cpu_usage = netChartData.max;
+        cpu_usage = 0;
+        for (int i = 1; i <= 5; i++)
+            cpu_usage += netChartData.latest_values[i].as<double>();
+        // cpu_usage = netChartData.max;
     }
 }
 
@@ -179,7 +189,7 @@ void getMemoryUsage()
         Serial.print("Memory Available: ");
         Serial.println(String(netChartData.max).c_str());
 
-        mem_usage = 100 * (1.0 - netChartData.max / 1024.0);
+        mem_usage = 100 * (1.0 - netChartData.max / mem_size);
     }
 }
 
@@ -214,7 +224,7 @@ lv_coord_t updateNetSeries(lv_coord_t *series, double speed)
 
 void getNetworkReceived()
 {
-    if (getNetDataInfoWithDimension("net.eth0", netChartData, "received"))
+    if (getNetDataInfoWithDimension(net_name, netChartData, "received"))
     {
         Serial.print("Received: ");
         Serial.println(String(netChartData.max).c_str());
@@ -227,7 +237,7 @@ void getNetworkReceived()
 
 void getNetworkSent()
 {
-    if (getNetDataInfoWithDimension("net.eth0", netChartData, "sent"))
+    if (getNetDataInfoWithDimension(net_name, netChartData, "sent"))
     {
         Serial.print("Sent: ");
         Serial.println(String(netChartData.min).c_str());
@@ -240,7 +250,7 @@ void getNetworkSent()
 
 void getTemperature()
 {
-    if (getNetDataInfo("sensors.temp_thermal_zone0_thermal_thermal_zone0", netChartData))
+    if (getNetDataInfo("snmp_nas.temperature", netChartData))
     {
         Serial.print("Temperature: ");
         Serial.println(String(netChartData.max).c_str());
@@ -255,54 +265,54 @@ void updateNetworkInfoLabel()
     {
         // < 99.99 K/S
         lv_label_set_text_fmt(up_speed_label, "%.2f", up_speed);
-        lv_label_set_text(up_speed_unit_label, "K/s");
+        lv_label_set_text(up_speed_unit_label, "KB/s");
     }
     else if (up_speed < 1000.0)
     {
         // 999.9 K/S
         lv_label_set_text_fmt(up_speed_label, "%.1f", up_speed);
-        lv_label_set_text(up_speed_unit_label, "K/s");
+        lv_label_set_text(up_speed_unit_label, "KB/s");
     }
     else if (up_speed < 100000.0)
     {
         // 99.99 M/S
         up_speed /= 1024.0;
         lv_label_set_text_fmt(up_speed_label, "%.2f", up_speed);
-        lv_label_set_text(up_speed_unit_label, "M/s");
+        lv_label_set_text(up_speed_unit_label, "MB/s");
     }
     else if (up_speed < 1000000.0)
     {
         // 999.9 M/S
         up_speed = up_speed / 1024.0;
         lv_label_set_text_fmt(up_speed_label, "%.1f", up_speed);
-        lv_label_set_text(up_speed_unit_label, "M/s");
+        lv_label_set_text(up_speed_unit_label, "MB/s");
     }
 
     if (down_speed < 100.0)
     {
         // < 99.99 K/S
         lv_label_set_text_fmt(down_speed_label, "%.2f", down_speed);
-        lv_label_set_text(down_speed_unit_label, "K/s");
+        lv_label_set_text(down_speed_unit_label, "KB/s");
     }
     else if (down_speed < 1000.0)
     {
         // 999.9 K/S
         lv_label_set_text_fmt(down_speed_label, "%.1f", down_speed);
-        lv_label_set_text(down_speed_unit_label, "K/s");
+        lv_label_set_text(down_speed_unit_label, "KB/s");
     }
     else if (down_speed < 100000.0)
     {
         // 99.99 M/S
         down_speed /= 1024.0;
         lv_label_set_text_fmt(down_speed_label, "%.2f", down_speed);
-        lv_label_set_text(down_speed_unit_label, "M/s");
+        lv_label_set_text(down_speed_unit_label, "MB/s");
     }
     else if (down_speed < 1000000.0)
     {
         // 999.9 M/S
         down_speed = down_speed / 1024.0;
         lv_label_set_text_fmt(down_speed_label, "%.1f", down_speed);
-        lv_label_set_text(down_speed_unit_label, "M/s");
+        lv_label_set_text(down_speed_unit_label, "MB/s");
     }
 }
 
@@ -313,13 +323,47 @@ void updateChartRange()
     lv_chart_set_range(chart, 0, (lv_coord_t)(max_speed * 1.1));
 }
 
+void getUptime()
+{
+    if (getNetDataInfo("system.uptime", netChartData))
+    {
+        Serial.print("Up time:");
+        int seconds = static_cast<int>(netChartData.max);
+        int day = seconds / (24 * 3600);
+        int hour = (seconds % (24 * 3600)) / 3600;
+        int minute = (seconds % 3600) / 60;
+        int second = seconds % 60;
+        if (day != 0)
+        {
+            up_time += to_string(day)+"天";
+        }
+        if (hour != 0 || day != 0)
+        {
+            up_time += to_string(hour)+"时" ;
+        }
+        if (minute != 0 || hour != 0 || day != 0)
+        {
+            up_time += to_string(minute)+"分";
+        }
+        if (second != 0 || minute != 0 || hour != 0 || day != 0)
+        {
+            up_time += to_string(second)+"秒";
+        }
+        if (day == 0 && hour == 0 && minute == 0 && second == 0)
+        {
+            up_time += "0秒";
+        }
+        Serial.print(up_time.c_str());
+    }
+}
+
 // task循环执行的函数
 static void task_cb(lv_task_t *task)
 {
     if (WiFi.status() != WL_CONNECTED)
     {
         connectWiFi();
-        lv_label_set_text(ip_label, WiFi.localIP().toString().c_str());
+        // lv_label_set_text(ip_label, WiFi.localIP().toString().c_str());
     }
     getCPUUsage();
     getMemoryUsage();
@@ -327,15 +371,21 @@ static void task_cb(lv_task_t *task)
     getNetworkReceived();
     getNetworkSent();
     updateChartRange();
+    getUptime();
     lv_chart_refresh(chart);
 
     updateNetworkInfoLabel();
+
 
     lv_bar_set_value(cpu_bar, cpu_usage, LV_ANIM_OFF);
     lv_label_set_text_fmt(cpu_value_label, "%2.1f%%", cpu_usage);
 
     lv_bar_set_value(mem_bar, mem_usage, LV_ANIM_OFF);
     lv_label_set_text_fmt(mem_value_label, "%2.0f%%", mem_usage);
+
+    lv_label_set_text(up_time_label,up_time.c_str());
+    lv_obj_set_pos(up_time_label, 10, 220);
+    up_time.clear();
 
     lv_label_set_text_fmt(temp_value_label, "%2.0f°C", temp_value);
     uint16_t end_value = 120 + 300 * temp_value / 100.0f;
@@ -394,10 +444,10 @@ void setup()
     lv_obj_set_size(bg, LV_HOR_RES_MAX, LV_VER_RES_MAX);
 
     // 显示ip地址
-    ip_label = lv_label_create(monitor_page, NULL);
-    lv_label_set_text(ip_label, WiFi.localIP().toString().c_str());
+    // ip_label = lv_label_create(monitor_page, NULL);
+    // lv_label_set_text(ip_label, WiFi.localIP().toString().c_str());
     // lv_label_set_text(ip_label, "192.168.100.199");
-    lv_obj_set_pos(ip_label, 10, 220);
+    // lv_obj_set_pos(ip_label, 10, 220);
 
     lv_obj_t *cont = lv_cont_create(monitor_page, NULL);
     lv_obj_set_auto_realign(cont, true); /*Auto realign when the size changes*/
@@ -445,7 +495,7 @@ void setup()
     lv_obj_set_pos(up_speed_label, 30, 15);
 
     up_speed_unit_label = lv_label_create(monitor_page, NULL);
-    lv_label_set_text(up_speed_unit_label, "K/S");
+    lv_label_set_text(up_speed_unit_label, "KB/S");
     lv_obj_set_style_local_text_color(up_speed_unit_label, LV_OBJ_PART_MAIN, LV_STATE_DEFAULT, speed_label_color);
     lv_obj_set_pos(up_speed_unit_label, 90, 18);
 
@@ -456,9 +506,16 @@ void setup()
     lv_obj_set_pos(down_speed_label, 142, 15);
 
     down_speed_unit_label = lv_label_create(monitor_page, NULL);
-    lv_label_set_text(down_speed_unit_label, "M/S");
+    lv_label_set_text(down_speed_unit_label, "MB/S");
     lv_obj_set_style_local_text_color(down_speed_unit_label, LV_OBJ_PART_MAIN, LV_STATE_DEFAULT, speed_label_color);
     lv_obj_set_pos(down_speed_unit_label, 202, 18);
+
+    //绘制启动时间
+    static lv_style_t font_20_time;
+    lv_style_init(&font_20_time);
+    lv_style_set_text_font(&font_20_time, LV_STATE_DEFAULT, &tencent_w7_20_time);
+    up_time_label=lv_label_create(monitor_page, NULL);
+    lv_obj_add_style(up_time_label,LV_LABEL_PART_MAIN,&font_20_time);
 
     // 绘制曲线图
     /*Create a chart*/

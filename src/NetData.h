@@ -72,7 +72,7 @@ void parseNetDataResponse(WiFiClient &client, NetChartData &data)
     data.points = doc["points"];              // 2
     data.format = doc["format"].as<String>(); // "array"
 
-    JsonArray db_points_per_tier = doc["db_points_per_tier"];
+    // JsonArray db_points_per_tier = doc["db_points_per_tier"];
     data.result = doc["result"];
     data.min = doc["min"]; // 2.1594684
     data.max = doc["max"]; // 3.7468776
@@ -87,7 +87,7 @@ void parseNetDataResponse(WiFiClient &client, NetChartData &data)
 
 bool getNetDataInfoWithDimension(String chartID, NetChartData &data, String dimensions_filter)
 {
-    const char *NETDATA_HOST = "192.168.100.1";
+    const char *NETDATA_HOST = "192.168.5.175";
     int NETDATA_PORT = 19999;
     // String reqRes = "/api/v0/data?chart=sensors.temp_thermal_zone0_thermal_thermal_zone0&format=json&points=9&group=average&gtime=0&options=s%7Cjsonwrap%7Cnonzero&after=-10";
     String reqRes = "/api/v1/data?chart=" + chartID + "&format=json&points=1&group=average&gtime=0&options=s%7Cjsonwrap%7Cnonzero&after=-2";
