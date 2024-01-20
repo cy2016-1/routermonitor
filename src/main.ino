@@ -2,6 +2,8 @@
 #include <TFT_eSPI.h>
 #include <string>
 #include <ESP8266WiFi.h>
+#include <NTPClient.h>
+#include <WiFiUdp.h>
 
 #include "NetData.h"
 
@@ -14,8 +16,8 @@ const char *password = "8877654321"; // 连接WiFi密码（此处使用12345678�
 // extern lv_font_t my_font_name;
 LV_FONT_DECLARE(tencent_w7_22)
 LV_FONT_DECLARE(tencent_w7_24)
-// LV_FONT_DECLARE(tencent_w7_24_time)
-LV_FONT_DECLARE(tencent_w7_20_time)
+LV_FONT_DECLARE(tencent_w7_18_time)
+LV_FONT_DECLARE(tencent_w7_18)
 
 TFT_eSPI tft = TFT_eSPI(); /* TFT instance */
 static lv_disp_buf_t disp_buf;
@@ -48,6 +50,26 @@ static lv_obj_t *chart;
 static lv_chart_series_t *ser1;
 static lv_chart_series_t *ser2;
 
+// 字体配置
+static lv_style_t iconfont;
+static lv_style_t font_16;
+static lv_style_t font_18;
+static lv_style_t font_18_time;
+static lv_style_t font_22;
+static lv_style_t font_24;
+
+// 定时亮度配置
+unsigned int bright = 220;
+bool autoLight = true;         // true:开启定时亮度 false:关闭定时亮度
+unsigned int nightLight = 256; //[0, 256] 越小越亮,越大越暗
+unsigned int nightHour = 23;
+unsigned int nightMin = 00;
+unsigned int nightSec = 00;
+unsigned int dayLight = bright; //[0, 256] 越小越亮,越大越暗
+unsigned int dayHour = 9;
+unsigned int dayMin = 0;
+unsigned int daySec = 0;
+
 NetChartData netChartData;
 
 lv_coord_t up_speed_max = 0;
@@ -64,6 +86,9 @@ string up_time;
 
 const auto net_name = "net.ovs_eth1";
 const auto mem_size = 7833960 / 1024.0;
+
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, "192.168.5.1", 28800);
 
 #if LV_USE_LOG != 0
 /* Serial debugging */
@@ -83,10 +108,31 @@ void setBrightness(int value)
     pinMode(TFT_BL, OUTPUT);
 }
 
+void setFont()
+{
+    lv_style_init(&iconfont);
+    lv_style_set_text_font(&iconfont, LV_STATE_DEFAULT, &iconfont_symbol);
+
+    lv_style_init(&font_16);
+    lv_style_set_text_font(&font_16, LV_STATE_DEFAULT, &tencent_w7_16);
+
+    lv_style_init(&font_18);
+    lv_style_set_text_font(&font_18, LV_STATE_DEFAULT, &tencent_w7_18);
+
+    lv_style_init(&font_18_time);
+    lv_style_set_text_font(&font_18_time, LV_STATE_DEFAULT, &tencent_w7_18_time);
+
+    lv_style_init(&font_22);
+    lv_style_set_text_font(&font_22, LV_STATE_DEFAULT, &tencent_w7_22);
+
+    lv_style_init(&font_24);
+    lv_style_set_text_font(&font_24, LV_STATE_DEFAULT, &tencent_w7_24);
+}
+
 // 页面初始化
 void setupPages()
 {
-    setBrightness(180);
+    setBrightness(bright);
     login_page = lv_cont_create(lv_scr_act(), NULL);
     lv_obj_set_size(login_page, 240, 240); // 设置容器大小
     lv_obj_set_style_local_bg_color(login_page, LV_OBJ_PART_MAIN, LV_STATE_DEFAULT, LV_COLOR_BLACK);
@@ -98,6 +144,32 @@ void setupPages()
 
     lv_obj_set_hidden(login_page, false);
     lv_obj_set_hidden(monitor_page, true);
+}
+
+void autoLightCtl()
+{
+    // string s = "现在时间：" + to_string(hour()) + ":" + to_string(minute()) + ":" + to_string(second());
+    // Serial.print(s.c_str());
+    if (!autoLight)
+    {
+        return;
+    }
+    int hour = timeClient.getHours();
+    int minute = timeClient.getMinutes();
+    int second = timeClient.getSeconds();
+
+    if ((hour == nightHour) && (minute == nightMin) && (second == nightSec))
+    {
+        setBrightness(nightLight);
+        Serial.println("nightLight: ");
+        Serial.println(nightLight);
+    }
+    else if ((hour == dayHour) && (minute == dayMin) && (second == daySec))
+    {
+        setBrightness(dayLight);
+        Serial.println("dayLight: ");
+        Serial.println(dayLight);
+    }
 }
 
 // 设置login_page显示组件
@@ -335,25 +407,25 @@ void getUptime()
         int second = seconds % 60;
         if (day != 0)
         {
-            up_time += to_string(day)+"天";
+            up_time += to_string(day) + "天";
         }
         if (hour != 0 || day != 0)
         {
-            up_time += to_string(hour)+"时" ;
+            up_time += to_string(hour) + "时";
         }
         if (minute != 0 || hour != 0 || day != 0)
         {
-            up_time += to_string(minute)+"分";
+            up_time += to_string(minute) + "分";
         }
         if (second != 0 || minute != 0 || hour != 0 || day != 0)
         {
-            up_time += to_string(second)+"秒";
+            up_time += to_string(second) + "秒";
         }
         if (day == 0 && hour == 0 && minute == 0 && second == 0)
         {
             up_time += "0秒";
         }
-        Serial.print(up_time.c_str());
+        Serial.println(up_time.c_str());
     }
 }
 
@@ -363,7 +435,6 @@ static void task_cb(lv_task_t *task)
     if (WiFi.status() != WL_CONNECTED)
     {
         connectWiFi();
-        // lv_label_set_text(ip_label, WiFi.localIP().toString().c_str());
     }
     getCPUUsage();
     getMemoryUsage();
@@ -376,14 +447,13 @@ static void task_cb(lv_task_t *task)
 
     updateNetworkInfoLabel();
 
-
     lv_bar_set_value(cpu_bar, cpu_usage, LV_ANIM_OFF);
     lv_label_set_text_fmt(cpu_value_label, "%2.1f%%", cpu_usage);
 
     lv_bar_set_value(mem_bar, mem_usage, LV_ANIM_OFF);
     lv_label_set_text_fmt(mem_value_label, "%2.0f%%", mem_usage);
 
-    lv_label_set_text(up_time_label,up_time.c_str());
+    lv_label_set_text(up_time_label, up_time.c_str());
     lv_obj_set_pos(up_time_label, 10, 220);
     up_time.clear();
 
@@ -393,10 +463,12 @@ static void task_cb(lv_task_t *task)
     lv_style_set_line_color(&arc_indic_style, LV_STATE_DEFAULT, arc_color);
     lv_obj_add_style(temperature_arc, LV_ARC_PART_INDIC, &arc_indic_style);
     lv_arc_set_end_angle(temperature_arc, end_value);
-
     // 测试内存泄漏
     Serial.print("⚠ Left Memory:");
     Serial.println(ESP.getFreeHeap());
+
+    timeClient.update();
+    Serial.println(timeClient.getFormattedTime());
 }
 
 void setup()
@@ -433,6 +505,7 @@ void setup()
 
     setupPages();
     initLoginPage();
+    setFont();
 
     lv_obj_t *bg;
     bg = lv_obj_create(monitor_page, NULL);
@@ -463,59 +536,51 @@ void setup()
     lv_obj_set_style_local_border_color(cont, LV_OBJ_PART_MAIN, LV_STATE_DEFAULT, cont_color);
     lv_obj_set_style_local_bg_color(cont, LV_OBJ_PART_MAIN, LV_STATE_DEFAULT, cont_color);
 
-    // Upload & Download Symbol
-    static lv_style_t iconfont;
-    lv_style_init(&iconfont);
-    lv_style_set_text_font(&iconfont, LV_STATE_DEFAULT, &iconfont_symbol);
-
+    // 上传的图标、速度和单位
     upload_label = lv_label_create(monitor_page, NULL);
     lv_obj_add_style(upload_label, LV_LABEL_PART_MAIN, &iconfont);
     lv_label_set_text(upload_label, CUSTOM_SYMBOL_UPLOAD);
     lv_color_t speed_label_color = lv_color_hex(0x838a99);
     lv_obj_set_style_local_text_color(upload_label, LV_OBJ_PART_MAIN, LV_STATE_DEFAULT, LV_COLOR_RED);
-    lv_obj_set_pos(upload_label, 10, 18);
+    lv_obj_set_pos(upload_label, 120, 18);
 
+    up_speed_label = lv_label_create(monitor_page, NULL);
+    lv_label_set_text(up_speed_label, "56.78");
+    lv_obj_add_style(up_speed_label, LV_LABEL_PART_MAIN, &font_18);
+    lv_obj_set_style_local_text_color(up_speed_label, LV_OBJ_PART_MAIN, LV_STATE_DEFAULT, LV_COLOR_WHITE);
+    lv_obj_set_pos(up_speed_label, 143, 18);
+
+    up_speed_unit_label = lv_label_create(monitor_page, NULL);
+    lv_label_set_text(up_speed_unit_label, "KB/S");
+    lv_obj_add_style(up_speed_unit_label, LV_LABEL_PART_MAIN, &font_16);
+    lv_obj_set_style_local_text_color(up_speed_unit_label, LV_OBJ_PART_MAIN, LV_STATE_DEFAULT, speed_label_color);
+    lv_obj_set_pos(up_speed_unit_label, 198, 18);
+
+    // 下载的图标、速度和单位
     lv_obj_t *down_label = lv_label_create(monitor_page, NULL);
     lv_obj_add_style(down_label, LV_LABEL_PART_MAIN, &iconfont);
     lv_label_set_text(down_label, CUSTOM_SYMBOL_DOWNLOAD);
     speed_label_color = lv_color_hex(0x838a99);
     lv_obj_set_style_local_text_color(down_label, LV_OBJ_PART_MAIN, LV_STATE_DEFAULT, LV_COLOR_GREEN);
-    lv_obj_set_pos(down_label, 120, 18);
-
-    // Upload & Download Speed Display
-    static lv_style_t font_22;
-    lv_style_init(&font_22);
-    // lv_style_set_text_font(&font_22, LV_STATE_DEFAULT, &lv_font_montserrat_24);
-    lv_style_set_text_font(&font_22, LV_STATE_DEFAULT, &tencent_w7_22);
-
-    up_speed_label = lv_label_create(monitor_page, NULL);
-    lv_label_set_text(up_speed_label, "56.78");
-    lv_obj_add_style(up_speed_label, LV_LABEL_PART_MAIN, &font_22);
-    lv_obj_set_style_local_text_color(up_speed_label, LV_OBJ_PART_MAIN, LV_STATE_DEFAULT, LV_COLOR_WHITE);
-    lv_obj_set_pos(up_speed_label, 30, 15);
-
-    up_speed_unit_label = lv_label_create(monitor_page, NULL);
-    lv_label_set_text(up_speed_unit_label, "KB/S");
-    lv_obj_set_style_local_text_color(up_speed_unit_label, LV_OBJ_PART_MAIN, LV_STATE_DEFAULT, speed_label_color);
-    lv_obj_set_pos(up_speed_unit_label, 90, 18);
+    lv_obj_set_pos(down_label, 10, 18);
 
     down_speed_label = lv_label_create(monitor_page, NULL);
     lv_label_set_text(down_speed_label, "12.34");
-    lv_obj_add_style(down_speed_label, LV_LABEL_PART_MAIN, &font_22);
+    lv_obj_add_style(down_speed_label, LV_LABEL_PART_MAIN, &font_18);
     lv_obj_set_style_local_text_color(down_speed_label, LV_OBJ_PART_MAIN, LV_STATE_DEFAULT, LV_COLOR_WHITE);
-    lv_obj_set_pos(down_speed_label, 142, 15);
+    lv_obj_set_pos(down_speed_label, 33, 18);
 
     down_speed_unit_label = lv_label_create(monitor_page, NULL);
+    lv_obj_add_style(down_speed_unit_label, LV_LABEL_PART_MAIN, &font_16);
     lv_label_set_text(down_speed_unit_label, "MB/S");
     lv_obj_set_style_local_text_color(down_speed_unit_label, LV_OBJ_PART_MAIN, LV_STATE_DEFAULT, speed_label_color);
-    lv_obj_set_pos(down_speed_unit_label, 202, 18);
+    lv_obj_set_pos(down_speed_unit_label, 76, 18);
 
-    //绘制启动时间
-    static lv_style_t font_20_time;
-    lv_style_init(&font_20_time);
-    lv_style_set_text_font(&font_20_time, LV_STATE_DEFAULT, &tencent_w7_20_time);
-    up_time_label=lv_label_create(monitor_page, NULL);
-    lv_obj_add_style(up_time_label,LV_LABEL_PART_MAIN,&font_20_time);
+    // 绘制启动时间
+
+    up_time_label = lv_label_create(monitor_page, NULL);
+    lv_obj_add_style(up_time_label, LV_LABEL_PART_MAIN, &font_18_time);
+    lv_obj_set_pos(up_time_label, 0, 220);
 
     // 绘制曲线图
     /*Create a chart*/
@@ -624,10 +689,6 @@ void setup()
     lv_obj_add_style(temperature_arc, LV_ARC_PART_INDIC, &arc_indic_style);
     // lv_obj_align(temperature_arc, NULL, LV_ALIGN_IN_BOTTOM_LEFT, 10, 10);
 
-    static lv_style_t font_24;
-    lv_style_init(&font_24);
-    lv_style_set_text_font(&font_24, LV_STATE_DEFAULT, &tencent_w7_24);
-
     temp_value_label = lv_label_create(monitor_page, NULL);
     lv_label_set_text(temp_value_label, "72℃");
     lv_obj_add_style(temp_value_label, LV_LABEL_PART_MAIN, &font_24);
@@ -635,9 +696,13 @@ void setup()
     lv_obj_set_pos(temp_value_label, 160, 170);
 
     lv_task_t *t = lv_task_create(task_cb, 1000, LV_TASK_PRIO_MID, &test_data);
+
+    timeClient.begin();
 }
 
 void loop()
 {
-    lv_task_handler(); /* let the GUI do its work */
+    lv_task_handler();
+    timeClient.update();
+    autoLightCtl();
 }
