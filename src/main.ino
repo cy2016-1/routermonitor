@@ -399,7 +399,7 @@ void getUptime()
 {
     if (getNetDataInfo("system.uptime", netChartData))
     {
-        Serial.print("Up time:");
+        Serial.println(netChartData.max);
         int seconds = static_cast<int>(netChartData.max);
         int day = seconds / (24 * 3600);
         int hour = (seconds % (24 * 3600)) / 3600;
