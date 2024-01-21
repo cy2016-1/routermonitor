@@ -236,6 +236,14 @@ LV_FONT_DECLARE(tencent_w7_22)
 LV_FONT_DECLARE(tencent_w7_24)
 #endif
 
+#ifdef TENCENT_W7_20
+LV_FONT_DECLARE(tencent_w7_20)
+#endif
+
+#ifdef TENCENT_W7_18
+LV_FONT_DECLARE(tencent_w7_18)
+#endif
+
 #ifdef ICONFONT_SYMBOL
 LV_FONT_DECLARE(iconfont_symbol)
 #endif
